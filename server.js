@@ -12,8 +12,7 @@ import ConversionWorker from './src/services/conversion-worker.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// CI/CD trigger - force rebuild for public image - with latest tag - v1.1
-// Create logs directory if it doesn't exist
+// CI/CD trigger - force rebuild for public image - with latest tag - v1.2
 const logsDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(logsDir)) {
   fs.mkdirSync(logsDir);
