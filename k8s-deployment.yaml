@@ -2,6 +2,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: minio-credentials
+  namespace: webapps
 type: Opaque
 data:
   access-key: bHVjYXJ2  # lucarv (base64 encoded)
@@ -11,10 +12,11 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: jpeg2avif-js-deployment
+  namespace: webapps
   labels:
     app: jpeg2avif-js
 spec:
-  replicas: 3
+  replicas: 2
   selector:
     matchLabels:
       app: jpeg2avif-js
@@ -42,7 +44,7 @@ spec:
         - name: PORT
           value: "3000"
         - name: REDIS_HOST
-          value: "redis-service.data.svc.cluster.local"
+          value: "redis.data.svc.cluster.local"
         - name: REDIS_PORT
           value: "6379"
         - name: REDIS_DB
@@ -68,7 +70,7 @@ spec:
             path: /health
             port: 3000
           initialDelaySeconds: 30
-          periodSeconds: 1800
+          periodSeconds: 300
           timeoutSeconds: 5
           failureThreshold: 3
         readinessProbe:
@@ -76,7 +78,7 @@ spec:
             path: /health
             port: 3000
           initialDelaySeconds: 5
-          periodSeconds: 1800
+          periodSeconds: 300
           timeoutSeconds: 3
           failureThreshold: 3
         volumeMounts:
@@ -91,6 +93,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: jpeg2avif-js-service
+  namespace: webapps
   labels:
     app: jpeg2avif-js
 spec:
