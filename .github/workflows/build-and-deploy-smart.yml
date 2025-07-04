@@ -146,8 +146,8 @@ jobs:
 
     - name: Update Kubernetes deployment
       run: |
-        # Get the image with SHA tag for this commit
-        IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ github.sha }}"
+        # Use latest tag for deployment
+        IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
         
         # Update the deployment with new image
         kubectl set image deployment/jpeg2avif-js-deployment \
