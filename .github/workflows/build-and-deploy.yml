@@ -10,6 +10,7 @@ on:
       - 'Dockerfile'
       - '.dockerignore'
       - 'k8s-deployment-ghcr.yaml'
+      - '.github/workflows/build-and-deploy.yml'
   pull_request:
     branches: [ main ]
     paths:
@@ -19,6 +20,7 @@ on:
       - 'Dockerfile'
       - '.dockerignore'
       - 'k8s-deployment-ghcr.yaml'
+      - '.github/workflows/build-and-deploy.yml'
 
 env:
   REGISTRY: ghcr.io
