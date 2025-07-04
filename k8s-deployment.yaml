@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jpeg2avif-js-deployment
+  labels:
+    app: jpeg2avif-js
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: jpeg2avif-js
+  template:
+    metadata:
+      labels:
+        app: jpeg2avif-js
+    spec:
+      containers:
+      - name: jpeg2avif-service
+        image: ghcr.io/ekskog/jpeg2avif-js:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3000"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 1800
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 1800
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+      volumes:
+      - name: logs
+        emptyDir: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jpeg2avif-js-service
+  labels:
+    app: jpeg2avif-js
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 3000
+    protocol: TCP
+    name: http
+  selector:
+    app: jpeg2avif-js
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jpeg2avif-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/client-max-body-size: "50m"
+spec:
+  rules:
+  - host: jpeg2avif.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: jpeg2avif-js-service
+            port:
+              number: 80
