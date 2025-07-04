@@ -148,7 +148,7 @@ jobs:
         
         # Update the deployment with new image
         kubectl set image deployment/jpeg2avif-js-deployment \
-          jpeg2avif-js=$IMAGE_TAG \
+          jpeg2avif-service=$IMAGE_TAG \
           -n ${{ env.NAMESPACE }}
         
         # Wait for rollout to complete
