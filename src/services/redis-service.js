@@ -24,10 +24,14 @@ class RedisService {
   }
 
   async connect() {
-    const redisHost = process.env.REDIS_HOST || 'localhost';
+    const redisHost = process.env.REDIS_HOST;
     const redisPort = process.env.REDIS_PORT || 6379;
     const redisDb = process.env.REDIS_DB || 0;
     const redisPassword = process.env.REDIS_PASSWORD || '';
+
+    if (!redisHost) {
+      throw new Error('REDIS_HOST environment variable is required');
+    }
 
     try {
       this.client = createClient({
