@@ -32,9 +32,10 @@ jobs:
         echo "$CHANGED_FILES"
         
         # Check if source code files changed (requiring build)
-        BUILD_FILES="server.js package.json package-lock.json Dockerfile .dockerignore"
         SHOULD_BUILD=false
         
+        # Check exact files
+        BUILD_FILES="server.js package.json package-lock.json Dockerfile .dockerignore"
         for file in $BUILD_FILES; do
           if echo "$CHANGED_FILES" | grep -q "^$file$"; then
             echo "Build file changed: $file"
@@ -42,6 +43,12 @@ jobs:
             break
           fi
         done
+        
+        # Check src/ directory
+        if echo "$CHANGED_FILES" | grep -q "^src/"; then
+          echo "Source code changed in src/ directory"
+          SHOULD_BUILD=true
+        fi
         
         # Check if deployment files changed (requiring deploy only)
         DEPLOY_FILES="k8s-deployment-ghcr.yaml .github/workflows/build-and-deploy-smart.yml"
