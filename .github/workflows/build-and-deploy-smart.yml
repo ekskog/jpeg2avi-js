@@ -44,7 +44,7 @@ jobs:
         done
         
         # Check if deployment files changed (requiring deploy only)
-        DEPLOY_FILES="k8s-deployment-ghcr.yaml .github/workflows/build-and-deploy.yml"
+        DEPLOY_FILES="k8s-deployment-ghcr.yaml .github/workflows/build-and-deploy-smart.yml"
         SHOULD_DEPLOY=false
         
         for file in $DEPLOY_FILES; do
