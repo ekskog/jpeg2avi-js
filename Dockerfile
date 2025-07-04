@@ -1,10 +1,11 @@
 # Use Node.js 18 Alpine for smaller image size
 FROM node:18-alpine
 
-# Install dependencies needed for Sharp
+# Install dependencies needed for Sharp with AVIF support
 RUN apk add --no-cache \
     libc6-compat \
     vips-dev \
+    libheif-dev \
     build-base \
     python3 \
     make \
