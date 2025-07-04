@@ -20,7 +20,9 @@
     "multer": "^2.0.0-rc.4",
     "winston": "^3.11.0",
     "cors": "^2.8.5",
-    "exiftool-vendored": "^28.7.0"
+    "exiftool-vendored": "^28.7.0",
+    "redis": "^4.6.0",
+    "uuid": "^9.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

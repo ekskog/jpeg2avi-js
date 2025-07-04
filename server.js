@@ -1,14 +1,13 @@
 import express from 'express';
 import multer from 'multer';
-import imagemin from 'imagemin';
-import imageminAvif from 'imagemin-avif';
-import Jimp from 'jimp';
 import winston from 'winston';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { exiftool } from 'exiftool-vendored';
+import redisService from './src/services/redis-service.js';
+import jobService from './src/services/job-service.js';
+import ConversionWorker from './src/services/conversion-worker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,6 +41,35 @@ const logger = winston.createLogger({
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Initialize Redis connection
+async function initializeRedis() {
+  try {
+    await redisService.connect();
+    logger.info('Redis connected successfully');
+  } catch (error) {
+    logger.error('Failed to connect to Redis:', error.message);
+    process.exit(1);
+  }
+}
+
+// Initialize conversion worker
+const conversionWorker = new ConversionWorker();
+
+// Start background worker
+async function startWorker() {
+  try {
+    // Start the conversion worker in background
+    conversionWorker.start().catch(error => {
+      logger.error('Worker crashed:', error.message);
+      // Restart worker after 5 seconds
+      setTimeout(startWorker, 5000);
+    });
+    logger.info('Conversion worker started');
+  } catch (error) {
+    logger.error('Failed to start worker:', error.message);
+  }
+}
 
 // Middleware
 app.use(cors());
@@ -80,22 +108,20 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    memory: getMemoryUsage()
+    memory: getMemoryUsage(),
+    redis: redisService.isConnected() ? 'connected' : 'disconnected'
   });
 });
 
-// Main conversion endpoint - Always returns both thumbnail and full-size variants
+// Non-blocking conversion endpoint - Returns job ID immediately
 app.post('/convert', upload.single('image'), async (req, res) => {
   const startTime = Date.now();
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
-  let memoryBefore = getMemoryUsage();
-  
-  logger.info('Conversion request started', {
+  logger.info('Conversion request received', {
     requestId,
     filename: req.file?.originalname,
-    fileSize: req.file?.size,
-    memoryBefore
+    fileSize: req.file?.size
   });
 
   try {
@@ -103,254 +129,112 @@ app.post('/convert', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'No image file provided' });
     }
 
-    const inputBuffer = req.file.buffer;
-    
-    // Create temporary files for metadata processing
-    const tempDir = path.join(__dirname, 'temp');
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-    
-    const tempOriginal = path.join(tempDir, `${requestId}_original.jpg`);
-    const tempThumb = path.join(tempDir, `${requestId}_thumb.avif`);
-    const tempFull = path.join(tempDir, `${requestId}_full.avif`);
-    
-    // Write original image to temp file for metadata extraction
-    fs.writeFileSync(tempOriginal, inputBuffer);
-    
-    // Extract EXIF metadata from original JPEG
-    let originalMetadata;
-    try {
-      originalMetadata = await exiftool.read(tempOriginal);
-      logger.info('Original metadata extracted', {
-        requestId,
-        hasGPS: !!(originalMetadata.GPSLatitude && originalMetadata.GPSLongitude),
-        hasExif: !!(originalMetadata.Make || originalMetadata.Model || originalMetadata.DateTimeOriginal),
-        cameraMake: originalMetadata.Make,
-        cameraModel: originalMetadata.Model,
-        dateTaken: originalMetadata.DateTimeOriginal
-      });
-    } catch (exifError) {
-      // If metadata extraction fails, fail the entire conversion
-      logger.error('Metadata extraction failed - aborting conversion', {
-        requestId,
-        error: exifError.message
-      });
-      
-      // Cleanup temp files
-      [tempOriginal].forEach(file => {
-        if (fs.existsSync(file)) fs.unlinkSync(file);
-      });
-      
-      return res.status(500).json({
-        success: false,
-        requestId,
-        error: 'Metadata extraction failed - conversion aborted to preserve data integrity',
-        processingTime: Date.now() - startTime
+    // Check Redis connection
+    if (!redisService.isConnected()) {
+      return res.status(503).json({ 
+        error: 'Service temporarily unavailable - job queue not ready' 
       });
     }
-    
-    // Get image metadata using Jimp
-    const image = await Jimp.read(inputBuffer);
-    
-    const metadata = {
-      width: image.getWidth(),
-      height: image.getHeight(),
-      format: 'jpeg',
-      channels: 3
-    };
-    
-    logger.info('Image metadata extracted', {
-      requestId,
-      width: metadata.width,
-      height: metadata.height,
-      format: metadata.format,
-      channels: metadata.channels
+
+    // Create job with image data
+    const job = await jobService.createJob({
+      originalName: req.file.originalname,
+      imageData: req.file.buffer.toString('base64'),
+      fileSize: req.file.size,
+      requestId
     });
 
-    // Process both images concurrently using imagemin + jimp
-    const [thumbnailBuffer, fullSizeBuffer] = await Promise.all([
-      // Create thumbnail (200x200)
-      (async () => {
-        const thumbnail = image.clone().scaleToFit(200, 200);
-        const thumbBuffer = await thumbnail.getBufferAsync(Jimp.MIME_JPEG);
-        return await imagemin.buffer(thumbBuffer, {
-          plugins: [
-            imageminAvif({
-              quality: 80,
-              effort: 6
-            })
-          ]
-        });
-      })(),
-      
-      // Create full-size AVIF
-      (async () => {
-        return await imagemin.buffer(inputBuffer, {
-          plugins: [
-            imageminAvif({
-              quality: 85,
-              effort: 6
-            })
-          ]
-        });
-      })()
-    ]);
-
-    // Write AVIF files to temp location
-    fs.writeFileSync(tempThumb, thumbnailBuffer);
-    fs.writeFileSync(tempFull, fullSizeBuffer);
-    
-    // Copy only the specific metadata we care about
-    try {
-      // Extract only dimensions, timestamp, and GPS location
-      const metadataToPreserve = {};
-      
-      // Dimensions (from image, not EXIF since we already have them)
-      metadataToPreserve.ImageWidth = metadata.width;
-      metadataToPreserve.ImageHeight = metadata.height;
-      
-      // Timestamp - try multiple possible fields
-      if (originalMetadata.DateTimeOriginal) {
-        metadataToPreserve.DateTimeOriginal = originalMetadata.DateTimeOriginal;
-      } else if (originalMetadata.DateTime) {
-        metadataToPreserve.DateTime = originalMetadata.DateTime;
-      } else if (originalMetadata.CreateDate) {
-        metadataToPreserve.CreateDate = originalMetadata.CreateDate;
-      }
-      
-      // GPS location
-      if (originalMetadata.GPSLatitude && originalMetadata.GPSLongitude) {
-        metadataToPreserve.GPSLatitude = originalMetadata.GPSLatitude;
-        metadataToPreserve.GPSLongitude = originalMetadata.GPSLongitude;
-        metadataToPreserve.GPSLatitudeRef = originalMetadata.GPSLatitudeRef;
-        metadataToPreserve.GPSLongitudeRef = originalMetadata.GPSLongitudeRef;
-      }
-      
-      // Copy metadata to thumbnail AVIF
-      await exiftool.write(tempThumb, metadataToPreserve, ['-overwrite_original']);
-      
-      // Copy metadata to full-size AVIF
-      await exiftool.write(tempFull, metadataToPreserve, ['-overwrite_original']);
-      
-      logger.info('Metadata successfully copied to AVIF files', {
-        requestId,
-        preservedFields: Object.keys(metadataToPreserve).length,
-        dimensions: `${metadata.width}x${metadata.height}`,
-        hasGPS: !!(originalMetadata.GPSLatitude && originalMetadata.GPSLongitude),
-        hasTimestamp: !!(originalMetadata.DateTimeOriginal || originalMetadata.DateTime || originalMetadata.CreateDate)
-      });
-      
-      // Read the final AVIF files with preserved metadata
-      const finalThumbnailBuffer = fs.readFileSync(tempThumb);
-      const finalFullSizeBuffer = fs.readFileSync(tempFull);
-      
-      // Cleanup temp files
-      [tempOriginal, tempThumb, tempFull].forEach(file => {
-        if (fs.existsSync(file)) fs.unlinkSync(file);
-      });
-      
-      const memoryAfter = getMemoryUsage();
-      const processingTime = Date.now() - startTime;
-
-      // Log conversion results
-      logger.info('Conversion completed successfully with metadata preserved', {
-        requestId,
-        processingTime,
-        memoryBefore,
-        memoryAfter,
-        memoryDelta: {
-          rss: memoryAfter.rss - memoryBefore.rss,
-          heapUsed: memoryAfter.heapUsed - memoryBefore.heapUsed
-        },
-        originalSize: inputBuffer.length,
-        thumbnailSize: finalThumbnailBuffer.length,
-        fullSizeSize: finalFullSizeBuffer.length,
-        compressionRatio: {
-          thumbnail: Math.round((1 - finalThumbnailBuffer.length / inputBuffer.length) * 100),
-          fullSize: Math.round((1 - finalFullSizeBuffer.length / inputBuffer.length) * 100)
-        },
-        metadataPreserved: true
-      });
-
-      // Clear input buffer from memory
-      inputBuffer.fill(0);
-
-      // Return both images as base64 encoded strings with metadata preserved
-      res.json({
-        success: true,
-        requestId,
-        processingTime,
-        thumbnail: {
-          data: finalThumbnailBuffer.toString('base64'),
-          size: finalThumbnailBuffer.length,
-          format: 'avif'
-        },
-        fullSize: {
-          data: finalFullSizeBuffer.toString('base64'),
-          size: finalFullSizeBuffer.length,
-          format: 'avif'
-        },
-        originalSize: inputBuffer.length,
-        metadataPreserved: true,
-        preservedMetadata: {
-          hasGPS: !!(originalMetadata.GPSLatitude && originalMetadata.GPSLongitude),
-          hasExif: !!(originalMetadata.Make || originalMetadata.Model || originalMetadata.DateTimeOriginal),
-          cameraMake: originalMetadata.Make,
-          cameraModel: originalMetadata.Model,
-          dateTaken: originalMetadata.DateTimeOriginal
-        },
-        memoryUsage: {
-          before: memoryBefore,
-          after: memoryAfter
-        }
-      });
-      
-    } catch (metadataError) {
-      // If metadata copying fails, fail the entire conversion
-      logger.error('Metadata copying failed - aborting conversion', {
-        requestId,
-        error: metadataError.message
-      });
-      
-      // Cleanup temp files
-      [tempOriginal, tempThumb, tempFull].forEach(file => {
-        if (fs.existsSync(file)) fs.unlinkSync(file);
-      });
-      
-      return res.status(500).json({
-        success: false,
-        requestId,
-        error: 'Metadata copying failed - conversion aborted to preserve data integrity',
-        processingTime: Date.now() - startTime
-      });
-    }
-
-    // Force garbage collection if available
-    if (global.gc) {
-      global.gc();
-    }
-
-  } catch (error) {
-    const memoryAfter = getMemoryUsage();
     const processingTime = Date.now() - startTime;
 
-    logger.error('Conversion failed', {
+    logger.info('Job created successfully', {
       requestId,
-      error: error.message,
-      stack: error.stack,
-      processingTime,
-      memoryBefore,
-      memoryAfter
+      jobId: job.id,
+      processingTime
     });
 
-    res.status(500).json({
-      success: false,
+    // Return job ID immediately - conversion happens in background
+    res.json({
+      success: true,
+      jobId: job.id,
+      status: 'queued',
+      message: 'Image queued for conversion',
+      processingTime,
+      statusUrl: `/status/${job.id}`
+    });
+
+  } catch (error) {
+    const processingTime = Date.now() - startTime;
+
+    logger.error('Failed to create conversion job', {
       requestId,
       error: error.message,
       processingTime
     });
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      processingTime
+    });
   }
+});
+
+// Job status endpoint - Check conversion progress and get results
+app.get('/status/:jobId', async (req, res) => {
+  const { jobId } = req.params;
+  
+  try {
+    // Check Redis connection
+    if (!redisService.isConnected()) {
+      return res.status(503).json({ 
+        error: 'Service temporarily unavailable - job queue not ready' 
+      });
+    }
+
+    const job = await jobService.getJobStatus(jobId);
+    
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        error: 'Job not found'
+      });
+    }
+
+    // Return job status and results if completed
+    res.json({
+      success: true,
+      jobId: job.id,
+      status: job.status,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      processingTime: job.processingTime,
+      results: job.results,
+      error: job.error
+    });
+
+  } catch (error) {
+    logger.error('Failed to get job status', {
+      jobId,
+      error: error.message
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Legacy synchronous endpoint for backward compatibility (deprecated)
+app.post('/convert-sync', upload.single('image'), async (req, res) => {
+  res.status(410).json({
+    success: false,
+    error: 'Synchronous conversion endpoint deprecated. Use POST /convert and GET /status/:jobId instead.',
+    migration: {
+      step1: 'POST /convert - returns jobId immediately',
+      step2: 'GET /status/:jobId - check status and get results'
+    }
+  });
 });
 
 // Error handling middleware
@@ -373,22 +257,55 @@ app.use((error, req, res, next) => {
 logger.info('AVIF converter initialized');
 logger.info('AVIF support: YES (via imagemin-avif)');
 
-// Start server
-app.listen(port, () => {
-  logger.info(`JPEG to AVIF conversion service started on port ${port}`, {
-    port,
-    nodeVersion: process.version,
-    initialMemory: getMemoryUsage()
-  });
-});
+// Start server with Redis initialization
+async function startServer() {
+  try {
+    // Initialize Redis connection
+    await initializeRedis();
+    
+    // Start conversion worker
+    await startWorker();
+    
+    // Start HTTP server
+    app.listen(port, () => {
+      logger.info(`Non-blocking JPEG to AVIF conversion service started on port ${port}`, {
+        port,
+        nodeVersion: process.version,
+        initialMemory: getMemoryUsage(),
+        redis: redisService.isConnected() ? 'connected' : 'disconnected'
+      });
+    });
+    
+  } catch (error) {
+    logger.error('Failed to start server:', error.message);
+    process.exit(1);
+  }
+}
+
+// Start the server
+startServer();
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   logger.info('Received SIGTERM, shutting down gracefully');
+  
+  // Stop conversion worker
+  await conversionWorker.stop();
+  
+  // Disconnect from Redis
+  await redisService.disconnect();
+  
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   logger.info('Received SIGINT, shutting down gracefully');
+  
+  // Stop conversion worker
+  await conversionWorker.stop();
+  
+  // Disconnect from Redis
+  await redisService.disconnect();
+  
   process.exit(0);
 });
