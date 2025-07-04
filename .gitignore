@@ -148,7 +148,6 @@ test_output/
 
 # Docker
 .dockerignore
-Dockerfile
 
 # Kubernetes
 k8s-*.yaml
