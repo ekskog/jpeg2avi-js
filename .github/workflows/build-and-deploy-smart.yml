@@ -146,9 +146,12 @@ jobs:
         # Use latest tag for deployment
         IMAGE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
         
-        # Update the deployment with new image
+        # Apply the deployment (creates or updates)
+        kubectl apply -f k8s-deployment.yaml -n ${{ env.NAMESPACE }}
+        
+        # Force update the image to trigger rollout
         kubectl set image deployment/jpeg2avif-js-deployment \
-          jpeg2avif-service=$IMAGE_TAG \
+          jpeg2avif-js=$IMAGE_TAG \
           -n ${{ env.NAMESPACE }}
         
         # Wait for rollout to complete

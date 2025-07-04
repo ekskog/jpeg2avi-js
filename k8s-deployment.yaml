@@ -24,7 +24,7 @@ spec:
         app: jpeg2avif-js
     spec:
       containers:
-      - name: jpeg2avif-service
+      - name: jpeg2avif-js
         image: ghcr.io/ekskog/jpeg2avif-js:latest
         imagePullPolicy: Always
         ports:
