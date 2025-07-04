@@ -11,13 +11,16 @@
   "keywords": ["jpeg", "avif", "image", "conversion", "thumbnails"],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "express": "^4.18.2",
-    "sharp": "^0.32.6",
+    "imagemin": "^8.0.1",
+    "imagemin-avif": "^0.1.6",
+    "jimp": "^0.22.10",
     "multer": "^2.0.0-rc.4",
     "winston": "^3.11.0",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "exiftool-vendored": "^28.7.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
