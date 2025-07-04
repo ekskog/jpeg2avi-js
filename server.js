@@ -6,6 +6,7 @@ const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 
+// CI/CD trigger
 // Create logs directory if it doesn't exist
 const logsDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(logsDir)) {
