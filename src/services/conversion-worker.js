@@ -8,6 +8,8 @@ import { exiftool } from 'exiftool-vendored';
 import jobService from './job-service.js';
 import winston from 'winston';
 
+// comment to force rebuild
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

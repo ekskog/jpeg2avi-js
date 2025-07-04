@@ -1,3 +1,12 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+type: Opaque
+data:
+  access-key: bHVjYXJ2  # lucarv (base64 encoded)
+  secret-key: bHVjYVBXRCRNaW5JMA==  # lucaPWD$MinI0 (base64 encoded)
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,6 +47,22 @@ spec:
           value: "6379"
         - name: REDIS_DB
           value: "0"
+        - name: MINIO_ENDPOINT
+          value: "minio.minio.svc.cluster.local:9000"
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: access-key
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: secret-key
+        - name: MINIO_BUCKET_NAME
+          value: "jpeg2avif"
+        - name: MINIO_USE_SSL
+          value: "false"
         livenessProbe:
           httpGet:
             path: /health
@@ -77,23 +102,3 @@ spec:
     name: http
   selector:
     app: jpeg2avif-js
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: jpeg2avif-ingress
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
-    nginx.ingress.kubernetes.io/client-max-body-size: "50m"
-spec:
-  rules:
-  - host: jpeg2avif.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: jpeg2avif-js-service
-            port:
-              number: 80
